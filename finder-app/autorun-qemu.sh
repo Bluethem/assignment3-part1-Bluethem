@@ -1,6 +1,6 @@
 #!/bin/sh
 
-cd /home || exit 1
+cd $(dirname $0)
 
 echo "Running test script"
 ./finder-test.sh
@@ -13,3 +13,5 @@ else
 fi
 
 echo "finder-app execution complete"
+
+/bin/sh

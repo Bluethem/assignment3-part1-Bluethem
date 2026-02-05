@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 #Exercise 1
 
 #Verificar el numero de argumentos en el comando
