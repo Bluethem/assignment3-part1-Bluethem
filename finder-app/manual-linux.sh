@@ -99,21 +99,34 @@ ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 SYSROOT=$(${CROSS_COMPILE}gcc -print-sysroot)
 echo "Sysroot: ${SYSROOT}"
 
-# Copy program interpreter
-PROGRAM_INTERPRETER=$(${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter" | sed -n 's/.*\[\(.*\)\]/\1/p')
+# Copy program interpreter (dynamic linker)
+echo "Extracting program interpreter path"
+PROGRAM_INTERPRETER=$(${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter" | awk -F: '{print $2}' | tr -d ' []')
 echo "Program interpreter: ${PROGRAM_INTERPRETER}"
-cp -L ${SYSROOT}${PROGRAM_INTERPRETER} ${OUTDIR}/rootfs/lib
+
+if [ -n "${PROGRAM_INTERPRETER}" ]; then
+    echo "Copying ${SYSROOT}${PROGRAM_INTERPRETER} to ${OUTDIR}/rootfs/lib"
+    cp -L ${SYSROOT}${PROGRAM_INTERPRETER} ${OUTDIR}/rootfs/lib
+else
+    echo "ERROR: Could not extract program interpreter"
+    exit 1
+fi
 
 # Copy shared libraries
-${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library" | sed -n 's/.*\[\(.*\)\]/\1/p' | while read library
+echo "Copying shared libraries"
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library" | awk -F: '{print $2}' | tr -d ' []' | while read library
 do
-    echo "Copying library: ${library}"
-    if [ -f ${SYSROOT}/lib64/${library} ]; then
-        cp -L ${SYSROOT}/lib64/${library} ${OUTDIR}/rootfs/lib64
-    elif [ -f ${SYSROOT}/lib/${library} ]; then
-        cp -L ${SYSROOT}/lib/${library} ${OUTDIR}/rootfs/lib
-    else
-        echo "Warning: Could not find ${library}"
+    if [ -n "${library}" ]; then
+        echo "Looking for library: ${library}"
+        if [ -f ${SYSROOT}/lib64/${library} ]; then
+            echo "Copying ${library} from lib64"
+            cp -L ${SYSROOT}/lib64/${library} ${OUTDIR}/rootfs/lib64
+        elif [ -f ${SYSROOT}/lib/${library} ]; then
+            echo "Copying ${library} from lib"
+            cp -L ${SYSROOT}/lib/${library} ${OUTDIR}/rootfs/lib
+        else
+            echo "Warning: Could not find ${library}"
+        fi
     fi
 done
 
