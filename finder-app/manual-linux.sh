@@ -35,16 +35,19 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     git checkout ${KERNEL_VERSION}
 
     # TODO: Add your kernel build steps here
-    echo "Starting compilation"
-    echo "Cleaning"
+    echo "Deep cleaning kernel build tree"
     make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
-    echo "Configuring"
+    
+    echo "Configuring kernel with defconfig"
     make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
-    echo "Compiling kernel"
-    make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all
-    echo "Compiling modules"
+    
+    echo "Building kernel image"
+    make -j$(nproc) ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all
+    
+    echo "Building kernel modules"
     make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules
-    echo "Compiling device tree"
+    
+    echo "Building device tree blobs"
     make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} dtbs
 fi
 
@@ -56,13 +59,16 @@ cd "$OUTDIR"
 if [ -d "${OUTDIR}/rootfs" ]
 then
 	echo "Deleting rootfs directory at ${OUTDIR}/rootfs and starting over"
-    sudo rm  -rf ${OUTDIR}/rootfs
+    sudo rm -rf ${OUTDIR}/rootfs
 fi
 
 # TODO: Create necessary base directories
-mkdir -p ${OUTDIR}/rootfs/{usr,bin,lib,lib64,etc,home,proc,sys,dev,sbin,tmp,usr,var}
-mkdir ${OUTDIR}/rootfs/usr/{bin,lib,sbin}
-mkdir ${OUTDIR}/rootfs/var/log
+echo "Creating base directory structure"
+mkdir -p ${OUTDIR}/rootfs
+cd ${OUTDIR}/rootfs
+mkdir -p bin dev etc home lib lib64 proc sbin sys tmp usr var
+mkdir -p usr/bin usr/lib usr/sbin
+mkdir -p var/log
 
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
@@ -70,7 +76,7 @@ then
     git clone git://busybox.net/busybox.git
     cd busybox
     git checkout ${BUSYBOX_VERSION}
-    # TODO:  Configure busybox
+    # TODO: Configure busybox
     make distclean
     make defconfig
 else
@@ -78,49 +84,110 @@ else
 fi
 
 # TODO: Make and install busybox
+echo "Building busybox"
 make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
+echo "Installing busybox to rootfs"
 make CONFIG_PREFIX=${OUTDIR}/rootfs ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
 
-# TODO: Add library dependencies to rootfs
 echo "Library dependencies"
-sysroot=$(${CROSS_COMPILE}gcc -print-sysroot)
-program_interpreter=$(${CROSS_COMPILE}readelf -a ./busybox | grep "program interpreter" | cut -d ":" -f 2 | cut -d "[" -f 2 | cut -d "]" -f 1 | xargs -n 1)
-cp ${sysroot}${program_interpreter} ${OUTDIR}/rootfs/lib
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter"
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
-for library in $(${CROSS_COMPILE}readelf -a ./busybox | grep "Shared library" | cut -d ":" -f 2 | cut -d "[" -f 2 | cut -d "]" -f 1 | xargs -n 1)
+# TODO: Add library dependencies to rootfs
+SYSROOT=$(${CROSS_COMPILE}gcc -print-sysroot)
+echo "Sysroot: ${SYSROOT}"
+
+# Copy program interpreter
+PROGRAM_INTERPRETER=$(${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter" | sed -n 's/.*\[\(.*\)\]/\1/p')
+echo "Program interpreter: ${PROGRAM_INTERPRETER}"
+cp -L ${SYSROOT}${PROGRAM_INTERPRETER} ${OUTDIR}/rootfs/lib
+
+# Copy shared libraries
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library" | sed -n 's/.*\[\(.*\)\]/\1/p' | while read library
 do
-    # Not check if file exists (for now)
-    cp ${sysroot}/lib64/$library ${OUTDIR}/rootfs/lib64
-done 
-
+    echo "Copying library: ${library}"
+    if [ -f ${SYSROOT}/lib64/${library} ]; then
+        cp -L ${SYSROOT}/lib64/${library} ${OUTDIR}/rootfs/lib64
+    elif [ -f ${SYSROOT}/lib/${library} ]; then
+        cp -L ${SYSROOT}/lib/${library} ${OUTDIR}/rootfs/lib
+    else
+        echo "Warning: Could not find ${library}"
+    fi
+done
 
 # TODO: Make device nodes
+echo "Creating device nodes"
 sudo mknod -m 666 ${OUTDIR}/rootfs/dev/null c 1 3
-sudo mknod -m 666 ${OUTDIR}/rootfs/dev/console c 5 1
+sudo mknod -m 600 ${OUTDIR}/rootfs/dev/console c 5 1
 
 # TODO: Clean and build the writer utility
-cd "$FINDER_APP_DIR"
+echo "Building writer utility"
+cd ${FINDER_APP_DIR}
 make clean
 make CROSS_COMPILE=${CROSS_COMPILE}
 
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
-echo "Copying finder app files to rootfs"
+echo "Copying finder application files to rootfs"
 
-mkdir -p ${OUTDIR}/rootfs/home
+# Verificar que los archivos existen
+if [ ! -f ${FINDER_APP_DIR}/writer ]; then
+    echo "ERROR: writer executable not found"
+    exit 1
+fi
 
-cp writer ${OUTDIR}/rootfs/home/
-cp finder.sh ${OUTDIR}/rootfs/home/
-cp finder-test.sh ${OUTDIR}/rootfs/home/
-cp autorun-qemu.sh ${OUTDIR}/rootfs/home/
-cp -r conf ${OUTDIR}/rootfs/home/
+if [ ! -f ${FINDER_APP_DIR}/finder.sh ]; then
+    echo "ERROR: finder.sh not found"
+    exit 1
+fi
+
+if [ ! -f ${FINDER_APP_DIR}/finder-test.sh ]; then
+    echo "ERROR: finder-test.sh not found"
+    exit 1
+fi
+
+if [ ! -f ${FINDER_APP_DIR}/autorun-qemu.sh ]; then
+    echo "ERROR: autorun-qemu.sh not found"
+    exit 1
+fi
+
+# Copiar archivos
+cp ${FINDER_APP_DIR}/writer ${OUTDIR}/rootfs/home/
+cp ${FINDER_APP_DIR}/finder.sh ${OUTDIR}/rootfs/home/
+cp ${FINDER_APP_DIR}/finder-test.sh ${OUTDIR}/rootfs/home/
+cp ${FINDER_APP_DIR}/autorun-qemu.sh ${OUTDIR}/rootfs/home/
+
+# Copiar el directorio conf (seguir enlaces simbólicos con -L)
+echo "Copying conf directory"
+cp -rL ${FINDER_APP_DIR}/conf ${OUTDIR}/rootfs/home/
+
+# Verificar que conf/username.txt fue copiado
+if [ ! -f ${OUTDIR}/rootfs/home/conf/username.txt ]; then
+    echo "ERROR: conf/username.txt was not copied successfully"
+    ls -la ${OUTDIR}/rootfs/home/
+    exit 1
+fi
+
+if [ ! -f ${OUTDIR}/rootfs/home/conf/assignment.txt ]; then
+    echo "ERROR: conf/assignment.txt was not copied successfully"
+    exit 1
+fi
+
+echo "Files copied successfully:"
+ls -la ${OUTDIR}/rootfs/home/
+ls -la ${OUTDIR}/rootfs/home/conf/
 
 # TODO: Chown the root directory
-cd "$OUTDIR"
-sudo chown -R root:root rootfs
+echo "Changing ownership to root"
+cd ${OUTDIR}/rootfs
+sudo chown -R root:root *
 
 # TODO: Create initramfs.cpio.gz
-cd "$OUTDIR/rootfs"
+echo "Creating initramfs"
 find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
-cd "$OUTDIR"
+cd ${OUTDIR}
 gzip -f initramfs.cpio
+
+echo "Build complete!"
+echo "Kernel: ${OUTDIR}/Image"
+echo "Initramfs: ${OUTDIR}/initramfs.cpio.gz"
