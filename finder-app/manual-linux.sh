@@ -73,7 +73,9 @@ mkdir -p var/log
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
-    git clone git://busybox.net/busybox.git
+    # Usar el espejo de GitHub en lugar de busybox.net
+    echo "Cloning busybox from GitHub mirror"
+    git clone https://github.com/mirror/busybox.git
     cd busybox
     git checkout ${BUSYBOX_VERSION}
     # TODO: Configure busybox
