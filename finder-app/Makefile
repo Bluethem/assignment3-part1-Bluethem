@@ -1,5 +1,7 @@
-CC = $(CROSS_COMPILE)gcc
-CFLAGS = -g
+CC ?= $(CROSS_COMPILE)gcc
+CFLAGS ?= -g
+
+all: writer
 
 writer: writer.o
 	$(CC) $(CFLAGS) writer.o -o writer
